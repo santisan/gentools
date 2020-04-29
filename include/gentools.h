@@ -1,10 +1,11 @@
-
+#include <array>
 #include <concepts>
 #include <experimental/coroutine>
 #include <experimental/generator>
 #include <iostream>
 #include <optional>
 #include <numeric>
+#include <range/v3/range/primitives.hpp>
 #include <range/v3/view/filter.hpp>
 #include <range/v3/view/generate.hpp>
 #include <range/v3/view/iota.hpp>
@@ -13,7 +14,10 @@
 #include <range/v3/view/transform.hpp>
 #include <range/v3/view/zip.hpp>
 #include <string>
+#include <tuple>
 #include <type_traits>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace gentools
@@ -42,6 +46,11 @@ namespace gentools
     template <ranges::range T>
     generator<range_value_t<T>> cycle(T&& range)
     {
+        if (ranges::begin(range) == ranges::end(range))
+        {
+            return;
+        }
+
         std::vector<range_value_t<T>> values;
         values.reserve(ranges::size(range));
 
@@ -131,6 +140,31 @@ namespace gentools
                                  ranges::views::filter([](auto&& pair) { return static_cast<bool>(pair.second); }))
         {
             co_yield value;
+        }
+    }
+
+    template <int N, typename ... Ts>
+    using param_list_element_t = std::tuple_element_t<N, std::tuple<Ts...>>;
+
+    // TODO: require the same range_value_t for all input ranges
+    // TODO 2: make a version without that restriction that returns a generator<variant<range_value_t<Ranges>..>> ???
+    template <ranges::range ... Ranges>
+    generator<range_value_t<param_list_element_t<0, Ranges...>>> chain(Ranges ... ranges)
+    {
+        using gen_list_t = std::vector<generator<range_value_t<param_list_element_t<0, Ranges...>>>>;
+        constexpr size_t rangesSize = std::tuple_size_v<std::tuple<Ranges...>>;
+
+        gen_list_t generators;
+        generators.reserve(rangesSize);
+
+        (generators.push_back(std::move(([](auto&& range) { for (auto&& v : range) co_yield v; })(ranges))), ...);
+
+        for (auto&& gen : generators)
+        {
+            for (auto&& v : gen)
+            {
+                co_yield v;
+            }
         }
     }
 
