@@ -146,18 +146,85 @@ namespace gentools
     template <int N, typename ... Ts>
     using param_list_element_t = std::tuple_element_t<N, std::tuple<Ts...>>;
 
-    // TODO: require the same range_value_t for all input ranges
-    // TODO 2: make a version without that restriction that returns a generator<variant<range_value_t<Ranges>..>> ???
+    template <int N, typename ... Ts>
+    using ranges_element_value_t = range_value_t<param_list_element_t<N, Ts...>>;
+
+    // TODO: require the same range_value_t for all input ranges (with concepts)
     template <ranges::range ... Ranges>
-    generator<range_value_t<param_list_element_t<0, Ranges...>>> chain(Ranges ... ranges)
+    generator<ranges_element_value_t<0, Ranges...>> chain(Ranges ... ranges)
     {
-        using gen_list_t = std::vector<generator<range_value_t<param_list_element_t<0, Ranges...>>>>;
+        using gen_t = generator<ranges_element_value_t<0, Ranges...>>;
+        using gen_list_t = std::vector<gen_t>;
         constexpr size_t rangesSize = std::tuple_size_v<std::tuple<Ranges...>>;
 
         gen_list_t generators;
         generators.reserve(rangesSize);
 
-        (generators.push_back(std::move(([](auto&& range) { for (auto&& v : range) co_yield v; })(ranges))), ...);
+        auto rangeToGenFn = [](auto&& range) -> gen_t
+        { 
+            for (auto&& v : range)
+            {
+                co_yield v; 
+            }
+        };
+        (generators.push_back(std::move(rangeToGenFn(ranges))), ...);
+
+        for (auto&& gen : generators)
+        {
+            for (auto&& v : gen)
+            {
+                co_yield v;
+            }
+        }
+    }
+
+    template <typename ... Ts>
+    struct typelist {};
+
+    template <typename A, template <typename ...> typename B>
+    struct rename_impl;
+
+    template <template <typename ...> typename A, typename ... Ts, template <typename ...> typename B>
+    struct rename_impl<A<Ts...>, B>
+    {
+        using type = B<Ts...>;
+    };
+
+    template <typename A, template <typename ...> typename B>
+    using rename_t = typename rename_impl<A, B>::type;
+
+    template <template<typename> typename MetaFunc, typename ... Ts>
+    struct transform_impl;
+
+    template <template<typename> typename MetaFunc, typename ... Ts>
+    struct transform_impl<MetaFunc, Ts...>
+    {
+        using type = typelist<MetaFunc<Ts>...>;
+    };
+
+    template <template<typename> typename MetaFunc, typename ... Ts>
+    using transform_t = typename transform_impl<MetaFunc, Ts...>::type;
+
+    // TODO: name this just 'chain' like the one above
+    template <ranges::range ... Ranges>
+    auto chain_heterogeneous(Ranges ... ranges) -> generator<rename_t<transform_t<range_value_t, Ranges...>, std::variant>>
+    {
+        using ranges_value_type_list_t = transform_t<range_value_t, Ranges...>;
+        using gen_value_t = rename_t<ranges_value_type_list_t, std::variant>;
+        using gen_list_t = std::vector<generator<gen_value_t>>;
+        constexpr size_t rangesSize = std::tuple_size_v<std::tuple<Ranges...>>;
+
+        gen_list_t generators;
+        generators.reserve(rangesSize);
+
+        auto rangeToGenFn = [](auto&& range) -> generator<gen_value_t>
+        { 
+            for (auto&& v : range)
+            {
+                co_yield gen_value_t(v);
+            }
+        };
+        (generators.push_back(std::move(rangeToGenFn(ranges))), ...);
 
         for (auto&& gen : generators)
         {

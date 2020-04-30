@@ -4,6 +4,7 @@
 #include <range/v3/algorithm/equal.hpp>
 #include <range/v3/range/conversion.hpp>
 #include <range/v3/view.hpp>
+#include <variant>
 #include <vector>
 
 #if defined(_WIN32) || defined(WIN32)
@@ -175,6 +176,33 @@ TEST_SUITE("chain")
 		
 		const int expected[6] = { 1, 2, 3, 4, 5, 6 };
 		CHECK(ranges::equal(results, expected));
+	}
 
+	TEST_CASE("chain heterogeneous")
+	{
+		const std::string expectedStr{"hello world"};		
+		std::string strResult{};
+		std::vector<int> intResult{};		
+
+		for (auto&& variant : gentools::chain_heterogeneous(ranges::views::iota(8, 11), expectedStr)) 
+		{
+			std::visit([&strResult, &intResult](auto&& arg) 
+			{
+				using T = std::decay_t<decltype(arg)>;
+				if constexpr (std::is_same_v<T, char>)
+				{
+					strResult.append(1, arg);
+				}
+				else if constexpr (std::is_same_v<T, int>)
+				{
+					intResult.push_back(arg);
+				}
+			}, variant);
+		}
+
+		CHECK(strResult == expectedStr);
+
+		const int expectedInt[3] = { 8, 9, 10 };
+		CHECK(ranges::equal(intResult, expectedInt));
 	}
 }
