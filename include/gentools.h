@@ -3,14 +3,18 @@
 #include <experimental/coroutine>
 #include <experimental/generator>
 #include <iostream>
+#include <functional>
 #include <optional>
 #include <numeric>
 #include <range/v3/range/primitives.hpp>
+#include <range/v3/view/drop_while.hpp>
 #include <range/v3/view/filter.hpp>
 #include <range/v3/view/generate.hpp>
 #include <range/v3/view/iota.hpp>
 #include <range/v3/view/reverse.hpp>
+#include <range/v3/view/subrange.hpp>
 #include <range/v3/view/take.hpp>
+#include <range/v3/view/take_while.hpp>
 #include <range/v3/view/transform.hpp>
 #include <range/v3/view/zip.hpp>
 #include <string>
@@ -33,6 +37,27 @@ namespace gentools
 
     template <typename T>
     concept arithmetic = requires { std::is_arithmetic_v<T>; };
+
+    template <ranges::range T>
+    generator<range_value_t<T>> to_generator(T&& range)
+    {
+        for (auto&& value : range)
+        {
+            co_yield value;
+        }
+    }
+
+    template <ranges::range T, invocable F>
+    using range_value_invoke_result_t = std::invoke_result_t<F, range_value_t<T>>;
+
+    template <ranges::range T, invocable F>
+    generator<range_value_invoke_result_t<T, F>> transform(T&& range, F&& func)
+    {
+        for (auto&& value : range)
+        {
+            co_yield func(value);
+        }
+    }
 
     template <arithmetic T>
     generator<T> count(T&& start = {}, T&& step = T{1})
@@ -150,24 +175,17 @@ namespace gentools
     using ranges_element_value_t = range_value_t<param_list_element_t<N, Ts...>>;
 
     // TODO: require the same range_value_t for all input ranges (with concepts)
-    template <ranges::range ... Ranges>
-    generator<ranges_element_value_t<0, Ranges...>> chain(Ranges ... ranges)
+    template <ranges::range ... Ts>
+    generator<ranges_element_value_t<0, Ts...>> chain(Ts&& ... ranges)
     {
-        using gen_t = generator<ranges_element_value_t<0, Ranges...>>;
+        using gen_t = generator<ranges_element_value_t<0, Ts...>>;
         using gen_list_t = std::vector<gen_t>;
-        constexpr size_t rangesSize = std::tuple_size_v<std::tuple<Ranges...>>;
+        constexpr size_t rangesSize = std::tuple_size_v<std::tuple<Ts...>>;
 
         gen_list_t generators;
         generators.reserve(rangesSize);
 
-        auto rangeToGenFn = [](auto&& range) -> gen_t
-        { 
-            for (auto&& v : range)
-            {
-                co_yield v; 
-            }
-        };
-        (generators.push_back(std::move(rangeToGenFn(ranges))), ...);
+        (generators.push_back(std::move(to_generator(ranges))), ...);
 
         for (auto&& gen : generators)
         {
@@ -206,25 +224,19 @@ namespace gentools
     using transform_t = typename transform_impl<MetaFunc, Ts...>::type;
 
     // TODO: name this just 'chain' like the one above
-    template <ranges::range ... Ranges>
-    auto chain_heterogeneous(Ranges ... ranges) -> generator<rename_t<transform_t<range_value_t, Ranges...>, std::variant>>
+    template <ranges::range ... Ts>
+    auto chain_heterogeneous(Ts&& ... ranges) -> generator<rename_t<transform_t<range_value_t, Ts...>, std::variant>>
     {
-        using ranges_value_type_list_t = transform_t<range_value_t, Ranges...>;
+        using ranges_value_type_list_t = transform_t<range_value_t, Ts...>;
         using gen_value_t = rename_t<ranges_value_type_list_t, std::variant>;
         using gen_list_t = std::vector<generator<gen_value_t>>;
-        constexpr size_t rangesSize = std::tuple_size_v<std::tuple<Ranges...>>;
+        constexpr size_t rangesSize = std::tuple_size_v<std::tuple<Ts...>>;
 
         gen_list_t generators;
         generators.reserve(rangesSize);
-
-        auto rangeToGenFn = [](auto&& range) -> generator<gen_value_t>
-        { 
-            for (auto&& v : range)
-            {
-                co_yield gen_value_t(v);
-            }
-        };
-        (generators.push_back(std::move(rangeToGenFn(ranges))), ...);
+        
+        auto rangeValueToVariantFunc = [](auto&& v) { return gen_value_t(v); };
+        (generators.push_back(std::move(transform(ranges, rangeValueToVariantFunc))), ...);
 
         for (auto&& gen : generators)
         {
@@ -232,6 +244,87 @@ namespace gentools
             {
                 co_yield v;
             }
+        }
+    }
+
+    template <ranges::range T, invocable F>
+    generator<range_value_t<T>> take_while(T&& range, F&& pred)
+    {
+        for (auto&& value : ranges::views::take_while(range, pred))
+        {
+            co_yield value;
+        }
+    }
+
+    template <ranges::range T, invocable F>
+    generator<range_value_t<T>> drop_while(T&& range, F&& pred)
+    {
+        for (auto&& value : ranges::views::drop_while(range, pred))
+        {
+            co_yield value;
+        }
+    }
+
+    template <ranges::range T, invocable F>
+    generator<range_value_t<T>> filter(T&& range, F&& pred)
+    {
+        for (auto&& value : ranges::views::filter(range, pred))
+        {
+            co_yield value;
+        }
+    }
+
+    template <ranges::range T, invocable F>
+    using group_key_t = range_value_invoke_result_t<T, F>;
+
+    template <ranges::range T, invocable F>
+    using group_t = std::pair<group_key_t<T, F>, ranges::safe_subrange_t<T>>;
+
+    template <ranges::range T>
+    struct Identity
+    {
+        range_value_t<T> operator()(range_value_t<T>&& value)
+        {
+            return value;
+        }
+    };
+
+    // Input range should be already ordered by the key
+    template <ranges::range T, invocable F>
+    generator<group_t<T, F>> group_by(T&& range, F&& keyFunc = Identity<T>{})
+    {
+        auto iter = ranges::begin(range);
+        const auto rangeEnd = ranges::end(range);
+        if (iter == rangeEnd)
+        {
+            return;
+        }
+
+        auto groupStartIter = iter;
+        auto currentKey = keyFunc(*iter);
+
+        while ((++iter) != rangeEnd)
+        {
+            const auto newKey = keyFunc(*iter);
+            if (newKey != currentKey)
+            {
+                co_yield std::make_pair(currentKey, ranges::make_subrange(groupStartIter, iter));
+                
+                currentKey = newKey;
+                groupStartIter = iter;
+            }
+        }
+
+        co_yield std::make_pair(currentKey, ranges::make_subrange(groupStartIter, iter));
+    }
+
+    template <ranges::range T, invocable F>
+    generator<range_value_invoke_result_t<T, F>> star_transform(T&& range, F&& func)
+        requires ranges::is_invocable_v<F, range_value_t<T>>
+    {
+        for (auto&& value : range)
+        {
+            co_yield func(value);
         }
     }
 

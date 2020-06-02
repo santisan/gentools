@@ -33,4 +33,10 @@ set_target_properties(GentoolsSample PROPERTIES
   OUTPUT_NAME "GentoolsSample"
 )
 
+target_include_directories(GentoolsSample PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/source/include)
+
+# These should be proper external targets (TODO: add cmake support for those projects)
+target_include_directories(GentoolsSample PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/json/include)
+target_include_directories(GentoolsSample PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/pipe/include)
+
 target_link_libraries(GentoolsSample Gentools) # cxxopts)

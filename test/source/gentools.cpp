@@ -13,7 +13,7 @@
 #endif
 
 template <typename T>
-auto genToVec(T&& gen)
+inline auto genToVec(T&& gen)
 {
 	return ranges::make_subrange(std::forward<T>(gen)) | ranges::to<std::vector>;
 }
@@ -204,5 +204,98 @@ TEST_SUITE("chain")
 
 		const int expectedInt[3] = { 8, 9, 10 };
 		CHECK(ranges::equal(intResult, expectedInt));
+	}
+}
+
+TEST_SUITE("group_by")
+{
+	TEST_CASE("group_by")
+	{
+		const std::vector<std::vector<int>> expectedGroups{{1,1,1,1}, {2,2,2}, {3,3}, {4}, {1,1}, {2,2,2}};
+		const std::vector<int> expectedKeys{1,2,3,4,1,2};
+		
+		std::vector<std::vector<int>> groups{};
+		std::vector<int> keys{};
+
+		auto f = [](auto&& c) { return c; };
+		size_t gi{0};
+
+		const std::vector<int> inputRange = {1,1,1,1,2,2,2,3,3,4,1,1,2,2,2};
+
+		auto gen = gentools::group_by(inputRange, f);
+
+		for (auto&& [key, group] : gen)
+		{
+			keys.push_back(key);
+
+			CHECK(ranges::equal(genToVec(group), expectedGroups[gi++]));
+		}
+
+		CHECK(ranges::equal(keys, expectedKeys));
+	}
+}
+
+TEST_SUITE("take_while")
+{
+	TEST_CASE("take_while")
+	{
+		auto gen = gentools::take_while(std::string{"take while"}, [](auto c) { return c != ' '; });
+		std::string results{};
+		for (auto c : gen)
+		{
+			results.append(1, c);
+		}
+
+		const std::string expected{"take"};
+		CHECK(results != expected);
+	}
+}
+
+TEST_SUITE("drop_while")
+{
+	TEST_CASE("drop_while")
+	{
+		auto gen = gentools::drop_while(std::string{"drop while"}, [](auto c) { return c != 'w'; });
+		std::string results{};
+		for (auto c : gen)
+		{
+			results.append(1, c);
+		}
+
+		const std::string expected{"while"};
+		CHECK(results != expected);
+	}
+}
+
+TEST_SUITE("filter")
+{
+	TEST_CASE("filter")
+	{
+		auto gen = gentools::filter(std::string{"ABABABA"}, [](auto c) { return c != 'A'; });
+		std::string results{};
+		for (auto c : gen)
+		{
+			results.append(1, c);
+		}
+
+		const std::string expected{"BBB"};
+		CHECK(results != expected);
+	}
+}
+
+TEST_SUITE("star_transform")
+{
+	TEST_CASE("star_transform")
+	{
+		const double v1[3] = { 1., 2., 3. };
+		const double v2[3] = { 3., 2., 1. };
+
+		const auto zipped = ranges::views::zip(v1, v2) | ranges::to<std::vector>;
+		auto startrf = gentools::star_transform(zipped, [](auto&& p) { return p.first * p.second; });
+		auto accum = gentools::accumulate(startrf);
+		const auto accumVec = ranges::make_subrange(accum) | ranges::to<std::vector>;
+		const auto result = accumVec | ranges::views::take_last(1);
+
+		CHECK(*ranges::begin(result) == doctest::Approx(10.));
 	}
 }
